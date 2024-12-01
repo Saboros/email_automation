@@ -26,11 +26,10 @@ if 'user_id' not in st.session_state:
 def init_database():
     db = DatabaseManager(user_id=st.session_state.user_id)
     try:
-        # Check and create tables if needed
-        db.check_tables()
+        db.init_database()  # Initialize tables
         return db
     except Exception as e:
-        st.error(f"Error initializing database tables: {e}")
+        st.error(f"Error initializing database: {e}")
         return None
 
 if "db" not in st.session_state:
