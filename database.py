@@ -6,6 +6,7 @@ import os
 class DatabaseManager:
     def __init__(self):
         self.conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+        self.init_database()
 
     def init_database(self):
         with self.conn.cursor() as cur:
