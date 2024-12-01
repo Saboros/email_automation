@@ -24,10 +24,20 @@ if 'user_id' not in st.session_state:
 # Initialize database with user_id
 @st.cache_resource
 def init_database():
-    return DatabaseManager(user_id=st.session_state.user_id)
+    db = DatabaseManager(user_id=st.session_state.user_id)
+    try:
+        # Check and create tables if needed
+        db.check_tables()
+        return db
+    except Exception as e:
+        st.error(f"Error initializing database tables: {e}")
+        return None
 
 if "db" not in st.session_state:
     st.session_state.db = init_database()
+    if st.session_state.db is None:
+        st.error("Failed to initialize database. Please refresh the page or contact support.")
+        st.stop()
 
 
 if "email_activities" not in st.session_state:
