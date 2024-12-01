@@ -9,7 +9,8 @@ class DatabaseManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._initialize_pool()
-        self.schema_name = f"user_{self.user_id.replace('-', '_')}"
+        # Create safe schema name from user_id
+        self.schema_name = f"visitor_{self.user_id.replace('-', '_')}"
 
     def _initialize_pool(self):
         """Initialize the connection pool"""
@@ -92,52 +93,47 @@ class DatabaseManager:
                 """)
     
     def create_user_schema(self):
-        """Create a schema for the user if it doesn't exist"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 try:
-                    # Create schema if not exists
+                    # Create isolated schema for visitor
                     cur.execute(f"""
                         CREATE SCHEMA IF NOT EXISTS {self.schema_name};
-                        GRANT USAGE ON SCHEMA {self.schema_name} TO PUBLIC;
-                        ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name} 
-                        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
+                        -- Grant usage to database_q6g3_user
+                        GRANT USAGE ON SCHEMA {self.schema_name} TO database_q6g3_user;
+                        -- Set default privileges
+                        ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name}
+                        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES 
+                        TO database_q6g3_user;
                     """)
+                    conn.commit()
                 except psycopg2.Error as e:
                     print(f"Schema creation error: {e}")
                     raise
 
     def init_database(self):
-        """Initialize database with user schema and tables"""
         try:
             self.create_user_schema()
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Create tables in user schema
+                    # Create tables in visitor's schema
                     cur.execute(f"""
-                        DROP TABLE IF EXISTS {self.schema_name}.conversations CASCADE;
-                        DROP TABLE IF EXISTS {self.schema_name}.email_activities CASCADE;
-                        
-                        CREATE TABLE {self.schema_name}.conversations (
+                        CREATE TABLE IF NOT EXISTS {self.schema_name}.conversations (
                             id SERIAL PRIMARY KEY,
-                            user_id TEXT NOT NULL,
-                            role TEXT NOT NULL,
                             content TEXT NOT NULL,
                             context TEXT,
-                            generated_text TEXT,
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
 
-                        CREATE TABLE {self.schema_name}.email_activities (
+                        CREATE TABLE IF NOT EXISTS {self.schema_name}.email_activities (
                             id SERIAL PRIMARY KEY,
-                            user_id TEXT NOT NULL,
                             recipient TEXT NOT NULL,
                             subject TEXT NOT NULL,
                             context TEXT,
-                            generated_text TEXT,
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
+                    conn.commit()
         except Exception as e:
             print(f"Error initializing database: {e}")
             raise
