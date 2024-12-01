@@ -9,7 +9,7 @@ import json
 class DatabaseManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
-        self.schema_name = f"user_{self.user_id}"  # Unique schema name for the user
+        self.schema_name = f"user_{self.user_id.replace('-', '_')}"  # Unique schema name for the user
         self._initialize_pool()
         self.ensure_schema()
         self.create_tables()
@@ -32,7 +32,7 @@ class DatabaseManager:
             conn = self.pool.getconn()
             with conn.cursor() as cur:
                 # Set the search_path to the user's schema for isolation
-                cur.execute(f"SET search_path TO {self.schema_name}")
+                cur.execute(f"SET search_path TO \"{self.schema_name}\"")
             yield conn
         except Exception as e:
             if conn:
@@ -47,7 +47,7 @@ class DatabaseManager:
         """Create schema for the user if it doesn't exist"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self.schema_name}")
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS \"{self.schema_name}\"")
 
     def create_tables(self):
         """Create required tables within the user's schema"""
