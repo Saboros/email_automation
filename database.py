@@ -8,25 +8,38 @@ import os
 class DatabaseManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
-        # Create connection pool
-        self.pool = psycopg2.pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=10,
-            dsn=os.getenv('DATABASE_URL')
-        )
+        self._initialize_pool()
+
+    def _initialize_pool(self):
+        """Initialize the connection pool"""
+        if not hasattr(self, 'pool') or self.pool.closed:
+            self.pool = psycopg2.pool.SimpleConnectionPool(
+                minconn=1,
+                maxconn=10,
+                dsn=os.getenv('DATABASE_URL')
+            )
 
     @contextmanager
     def get_connection(self):
         """Context manager for database connections"""
-        conn = self.pool.getconn()
+        self._initialize_pool()  # Ensure pool is available
+        conn = None
         try:
+            conn = self.pool.getconn()
             yield conn
         except Exception as e:
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise e
         finally:
-            conn.commit()
-            self.pool.putconn(conn)
+            if conn:
+                conn.commit()
+                self.pool.putconn(conn)
+
+    def close_pool(self):
+        """Explicitly close the connection pool"""
+        if hasattr(self, 'pool') and not self.pool.closed:
+            self.pool.closeall()
 
     def check_tables(self):
         """Check if required tables exist and create them if missing"""
