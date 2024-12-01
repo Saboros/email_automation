@@ -6,8 +6,7 @@ import os
 class DatabaseManager:
     def __init__(self):
         self.conn = psycopg2.connect(os.getenv('DATABASE_URL'))
-        self.init_database()
-
+        
     def init_database(self):
         with self.conn.cursor() as cur:
             # Drop existing tables if they exist
@@ -46,23 +45,23 @@ class DatabaseManager:
                 (role, content, context, generated_text)
             )
             self.conn.commit()
-
+        
     def get_recent_conversation(self, limit=10):
-        if not isinstance(limit, int) or limit <= 0:
-            raise ValueError("Limit must be a positive integer")
         with self.conn.cursor() as cur:
-            query = f"SELECT role, content, context FROM conversations ORDER BY timestamp DESC LIMIT {limit}"
-            cur.execute(query)
+            cur.execute(
+                "SELECT role, content, context FROM conversations ORDER BY timestamp DESC LIMIT %s",
+                (limit,)
+            )
             return cur.fetchall()
     
     def get_recent_email_activities(self, limit=5):
-        if not isinstance(limit, int) or limit <= 0:
-            raise ValueError("Limit must be a positive integer")
         with self.conn.cursor() as cur:
-            query = f"SELECT recipient, subject, context, generated_text FROM email_activities ORDER BY timestamp DESC LIMIT {limit}"
-            cur.execute(query)
+            cur.execute(
+                "SELECT recipient, subject, context, generated_text FROM email_activities ORDER BY timestamp DESC LIMIT %s",
+                (limit,)
+            )
             return cur.fetchall()
-
+    
     def save_email_activity(self, recipient, subject, context, generated_text):
         with self.conn.cursor() as cur:
             cur.execute(
@@ -70,7 +69,7 @@ class DatabaseManager:
                 (recipient, subject, context, generated_text)
             )
             self.conn.commit()
-
+    
     def execute_query(self, query):
         try:
             with self.conn.cursor() as cur:
@@ -80,3 +79,7 @@ class DatabaseManager:
         except psycopg2.Error as e:
             print(f"Database error: {e}")
             return []
+
+    def __del__(self):
+        if hasattr(self, 'conn'):
+            self.conn.close()
