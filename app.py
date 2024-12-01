@@ -18,47 +18,46 @@ load_dotenv()
 st.set_page_config(page_title="Email-Automation with Chat", page_icon="🤖")
 st.title("Email-Automation with Chat")
 
-# Session Management
-def init_session_state():
-    if 'user_id' not in st.session_state:
-        # Generate or retrieve persistent user ID
-        st.session_state.user_id = str(uuid.uuid4())
-    if 'db' not in st.session_state:
-        st.session_state.db = None
+# Initialize session state variables first
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())
 
+if 'db' not in st.session_state:
+    st.session_state.db = None
+
+# Session Management
 @contextmanager
 def database_connection():
     """Context manager for database connections"""
     try:
+        # Initialize database if not exists
         if st.session_state.db is None:
             st.session_state.db = DatabaseManager(user_id=st.session_state.user_id)
+            st.session_state.db.init_database()  # Initialize tables
         yield st.session_state.db
     except Exception as e:
         st.error(f"Database connection error: {e}")
-        st.session_state.db = None
+        st.session_state.db = None  # Reset on error
         raise
     finally:
         if hasattr(st.session_state, 'db') and st.session_state.db is not None:
-            del st.session_state.db
+            st.session_state.db.pool.closeall()  # Cleanup connections
 
-# Add to start of app
-init_session_state()
-
-# Initialize database with user_id
+# Database initialization
 @st.cache_resource
 def init_database():
     try:
         with database_connection() as db:
-            db.init_database()
             return db
     except Exception as e:
         st.error(f"Failed to initialize database: {e}")
         return None
 
-if "db" not in st.session_state:
+# Initialize database on app start
+if st.session_state.db is None:
     st.session_state.db = init_database()
     if st.session_state.db is None:
-        st.error("Failed to initialize database. Please refresh the page or contact support.")
+        st.error("Failed to initialize database. Please refresh the page.")
         st.stop()
 
 
