@@ -10,6 +10,7 @@ from streamlit_option_menu import option_menu
 import time
 from dotenv import load_dotenv
 import uuid
+from contextlib import contextmanager
 
 load_dotenv()
 
@@ -17,19 +18,41 @@ load_dotenv()
 st.set_page_config(page_title="Email-Automation with Chat", page_icon="🤖")
 st.title("Email-Automation with Chat")
 
-# User session management
-if 'user_id' not in st.session_state:
-    st.session_state.user_id = str(uuid.uuid4())  # Generate unique user ID
+# Session Management
+def init_session_state():
+    if 'user_id' not in st.session_state:
+        # Generate or retrieve persistent user ID
+        st.session_state.user_id = str(uuid.uuid4())
+    if 'db' not in st.session_state:
+        st.session_state.db = None
+
+@contextmanager
+def database_connection():
+    """Context manager for database connections"""
+    try:
+        if st.session_state.db is None:
+            st.session_state.db = DatabaseManager(user_id=st.session_state.user_id)
+        yield st.session_state.db
+    except Exception as e:
+        st.error(f"Database connection error: {e}")
+        st.session_state.db = None
+        raise
+    finally:
+        if hasattr(st.session_state, 'db') and st.session_state.db is not None:
+            del st.session_state.db
+
+# Add to start of app
+init_session_state()
 
 # Initialize database with user_id
 @st.cache_resource
 def init_database():
-    db = DatabaseManager(user_id=st.session_state.user_id)
     try:
-        db.init_database()  # Initialize tables
-        return db
+        with database_connection() as db:
+            db.init_database()
+            return db
     except Exception as e:
-        st.error(f"Error initializing database: {e}")
+        st.error(f"Failed to initialize database: {e}")
         return None
 
 if "db" not in st.session_state:
@@ -142,12 +165,13 @@ if selection == "Email Automation":
                             )
                             if email_body:
                                 # Save email activity to database with user_id
-                                st.session_state.db.save_email_activity(
-                                    recipient_name,
-                                    subject,
-                                    email_context,
-                                    email_body
-                                )
+                                with database_connection() as db:
+                                    db.save_email_activity(
+                                        recipient_name,
+                                        subject,
+                                        email_context,
+                                        email_body
+                                    )
                                 
                                 email_automation.send_email(recipient_email, subject, email_body)
                                 email_summary.append({
@@ -186,7 +210,8 @@ if selection == "Chat Interface":
     
     # Modify the chat input handling
     if prompt := st.chat_input("What would you like to ask?"):
-        recent_emails = st.session_state.db.get_recent_email_activities(5)
+        with database_connection() as db:
+            recent_emails = db.get_recent_email_activities(5)
         system_context = st.session_state.messages[0]["content"]
             
             # Always include database status
@@ -220,7 +245,8 @@ if selection == "Chat Interface":
             full_response = st.session_state.ai_model.generate_response(st.session_state.messages)
                 
                 # Save assistant's response
-            st.session_state.db.save_conversation("assistant", full_response)
+            with database_connection() as db:
+                db.save_conversation("assistant", full_response)
                 
             
             placeholder_text = ""
