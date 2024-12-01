@@ -47,19 +47,19 @@ class DatabaseManager:
             self.conn.commit()
 
     def get_recent_conversation(self, limit=10):
+        if not isinstance(limit, int) or limit <= 0:
+            raise ValueError("Limit must be a positive integer")
         with self.conn.cursor() as cur:
-            cur.execute(
-                "SELECT role, content, context FROM conversations ORDER BY timestamp DESC LIMIT %s",
-                (limit,)
-            )
+            query = f"SELECT role, content, context FROM conversations ORDER BY timestamp DESC LIMIT {limit}"
+            cur.execute(query)
             return cur.fetchall()
     
     def get_recent_email_activities(self, limit=5):
+        if not isinstance(limit, int) or limit <= 0:
+            raise ValueError("Limit must be a positive integer")
         with self.conn.cursor() as cur:
-            cur.execute(
-                "SELECT recipient, subject, context, generated_text FROM email_activities ORDER BY timestamp DESC LIMIT %s",
-                (limit,)
-            )
+            query = f"SELECT recipient, subject, context, generated_text FROM email_activities ORDER BY timestamp DESC LIMIT {limit}"
+            cur.execute(query)
             return cur.fetchall()
 
     def save_email_activity(self, recipient, subject, context, generated_text):
