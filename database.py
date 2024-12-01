@@ -9,7 +9,7 @@ class DatabaseManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._initialize_pool()
-        # Create safe schema name from user_id
+        # Create unique schema name from user_id
         self.schema_name = f"visitor_{self.user_id.replace('-', '_')}"
 
     def _initialize_pool(self):
@@ -96,12 +96,14 @@ class DatabaseManager:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 try:
-                    # Create isolated schema for visitor
+                    # Drop existing schema if exists for clean slate
                     cur.execute(f"""
-                        CREATE SCHEMA IF NOT EXISTS {self.schema_name};
-                        -- Grant usage to database_q6g3_user
+                        DROP SCHEMA IF EXISTS {self.schema_name} CASCADE;
+                        CREATE SCHEMA {self.schema_name};
+                        -- Restrict access to only the current database user
+                        REVOKE ALL ON SCHEMA {self.schema_name} FROM PUBLIC;
                         GRANT USAGE ON SCHEMA {self.schema_name} TO database_q6g3_user;
-                        -- Set default privileges
+                        -- Set restrictive default privileges
                         ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name}
                         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES 
                         TO database_q6g3_user;
@@ -182,13 +184,13 @@ class DatabaseManager:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 try:
-                    cur.execute(
-                        f"""SELECT recipient, subject, context, generated_text 
-                           FROM {self.schema_name}.email_activities 
-                           WHERE user_id = %s
-                           ORDER BY timestamp DESC LIMIT %s""",
-                        (self.user_id, limit)
-                    )
+                    # Only query current user's schema
+                    cur.execute(f"""
+                        SELECT recipient, subject, context, generated_text 
+                        FROM {self.schema_name}.email_activities 
+                        WHERE user_id = %s
+                        ORDER BY timestamp DESC LIMIT %s
+                    """, (self.user_id, limit))
                     return cur.fetchall()
                 except psycopg2.Error as e:
                     print(f"Database error: {e}")
@@ -218,6 +220,29 @@ class DatabaseManager:
         except psycopg2.Error as e:
             print(f"Database error: {e}")
             return []
+
+    def cleanup_old_schemas(self, hours_old=24):
+        """Cleanup schemas older than specified hours"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("""
+                        SELECT schema_name 
+                        FROM information_schema.schemata 
+                        WHERE schema_name LIKE 'visitor_%'
+                        AND schema_name NOT IN (
+                            SELECT DISTINCT schemaname 
+                            FROM pg_stat_activity 
+                            WHERE query_start > NOW() - interval '%s hours'
+                        )
+                    """, (hours_old,))
+                    old_schemas = cur.fetchall()
+                    for schema in old_schemas:
+                        cur.execute(f"DROP SCHEMA IF EXISTS {schema[0]} CASCADE")
+                    conn.commit()
+                except psycopg2.Error as e:
+                    print(f"Cleanup error: {e}")
+                    raise
 
     def __del__(self):
         """Cleanup connection pool"""
