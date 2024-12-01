@@ -6,11 +6,10 @@ from typing import Optional, List, Tuple
 import os
 
 class DatabaseManager:
-    def __init__(self, user_id: str):
-        self.user_id = user_id
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self.schema_name = f"session_{session_id.replace('-', '_')}"
         self._initialize_pool()
-        # Create unique schema name from user_id
-        self.schema_name = f"visitor_{self.user_id.replace('-', '_')}"
 
     def _initialize_pool(self):
         """Initialize the connection pool"""
@@ -248,3 +247,33 @@ class DatabaseManager:
         """Cleanup connection pool"""
         if hasattr(self, 'pool'):
             self.pool.closeall()
+
+    def create_session_schema(self):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    CREATE SCHEMA IF NOT EXISTS {self.schema_name};
+                    REVOKE ALL ON SCHEMA {self.schema_name} FROM PUBLIC;
+                    GRANT USAGE ON SCHEMA {self.schema_name} TO database_q6g3_user;
+                """)
+
+    def init_session_tables(self):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.schema_name}.conversations (
+                        id SERIAL PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE TABLE IF NOT EXISTS {self.schema_name}.email_activities (
+                        id SERIAL PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        recipient TEXT NOT NULL,
+                        subject TEXT NOT NULL,
+                        context TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
