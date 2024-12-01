@@ -58,14 +58,40 @@ class DatabaseManager:
             self.conn.commit()
             
     def init_database(self):
-        """Initialize database by dropping and recreating all tables"""
+        """Initialize database by dropping and recreating tables"""
         try:
             with self.conn.cursor() as cur:
+                # Drop existing tables
                 cur.execute("DROP TABLE IF EXISTS conversations CASCADE")
                 cur.execute("DROP TABLE IF EXISTS email_activities CASCADE")
-                self.create_conversations_table()
-                self.create_email_activities_table()
-        except psycopg2.Error as e:
+                
+                # Create conversations table
+                cur.execute("""
+                    CREATE TABLE conversations (
+                        id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        context TEXT,
+                        generated_text TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create email_activities table
+                cur.execute("""
+                    CREATE TABLE email_activities (
+                        id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        recipient TEXT NOT NULL,
+                        subject TEXT NOT NULL,
+                        context TEXT,
+                        generated_text TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                self.conn.commit()
+        except Exception as e:
             print(f"Error initializing database: {e}")
             raise
 
