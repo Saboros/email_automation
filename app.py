@@ -25,6 +25,13 @@ if 'user_id' not in st.session_state:
 if 'db' not in st.session_state:
     st.session_state.db = None
 
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+
+db = DatabaseManager(session_id=st.session_state.session_id)
+db.create_session_schema()
+db.init_session_tables()
+
 # Session Management
 @contextmanager
 def database_connection():
