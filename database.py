@@ -8,10 +8,8 @@ import os
 class DatabaseManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
-        self.schema_name = f"user_{self.user_id.replace('-', '_')}"  # Replace invalid characters
         self._initialize_pool()
-        self.ensure_schema()
-        self.init_database()  # Initialize the database tables for the schema
+        self.schema_name = f"user_{self.user_id.replace('-', '_')}"
 
     def _initialize_pool(self):
         """Initialize the connection pool"""
@@ -29,9 +27,6 @@ class DatabaseManager:
         conn = None
         try:
             conn = self.pool.getconn()
-            with conn.cursor() as cur:
-                # Set the schema for this connection
-                cur.execute(f'SET search_path TO "{self.schema_name}"')
             yield conn
         except Exception as e:
             if conn:
@@ -42,20 +37,34 @@ class DatabaseManager:
                 conn.commit()
                 self.pool.putconn(conn)
 
-    def ensure_schema(self):
-        """Create schema for the user if it doesn't exist"""
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Use double quotes around schema name for safety
-                cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema_name}"')
+    def close_pool(self):
+        """Explicitly close the connection pool"""
+        if hasattr(self, 'pool') and not self.pool.closed:
+            self.pool.closeall()
 
-    def init_database(self):
-        """Initialize tables in the user's schema"""
+    def check_tables(self):
+        """Check if required tables exist and create them if missing"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                # Create the conversations table
+                # Check if tables exist
                 cur.execute("""
-                    CREATE TABLE IF NOT EXISTS conversations (
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public'
+                """)
+                existing_tables = {table[0] for table in cur.fetchall()}
+                
+                if 'conversations' not in existing_tables:
+                    self.create_conversations_table()
+                if 'email_activities' not in existing_tables:
+                    self.create_email_activities_table()
+    
+    def create_conversations_table(self):
+        """Create conversations table with user_id field"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE conversations (
                         id SERIAL PRIMARY KEY,
                         user_id TEXT NOT NULL,
                         role TEXT NOT NULL,
@@ -65,9 +74,13 @@ class DatabaseManager:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-                # Create the email_activities table
+    
+    def create_email_activities_table(self):
+        """Create email_activities table with user_id field"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
                 cur.execute("""
-                    CREATE TABLE IF NOT EXISTS email_activities (
+                    CREATE TABLE email_activities (
                         id SERIAL PRIMARY KEY,
                         user_id TEXT NOT NULL,
                         recipient TEXT NOT NULL,
@@ -77,10 +90,61 @@ class DatabaseManager:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+    
+    def create_user_schema(self):
+        """Create a schema for the user if it doesn't exist"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    # Create schema if not exists
+                    cur.execute(f"""
+                        CREATE SCHEMA IF NOT EXISTS {self.schema_name};
+                        GRANT USAGE ON SCHEMA {self.schema_name} TO PUBLIC;
+                        ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name} 
+                        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
+                    """)
+                except psycopg2.Error as e:
+                    print(f"Schema creation error: {e}")
+                    raise
 
-    def save_conversation(self, role: str, content: any,
-                          context: Optional[str] = None,
-                          generated_text: Optional[str] = None) -> None:
+    def init_database(self):
+        """Initialize database with user schema and tables"""
+        try:
+            self.create_user_schema()
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Create tables in user schema
+                    cur.execute(f"""
+                        DROP TABLE IF EXISTS {self.schema_name}.conversations CASCADE;
+                        DROP TABLE IF EXISTS {self.schema_name}.email_activities CASCADE;
+                        
+                        CREATE TABLE {self.schema_name}.conversations (
+                            id SERIAL PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            role TEXT NOT NULL,
+                            content TEXT NOT NULL,
+                            context TEXT,
+                            generated_text TEXT,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+
+                        CREATE TABLE {self.schema_name}.email_activities (
+                            id SERIAL PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            recipient TEXT NOT NULL,
+                            subject TEXT NOT NULL,
+                            context TEXT,
+                            generated_text TEXT,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+        except Exception as e:
+            print(f"Error initializing database: {e}")
+            raise
+
+    def save_conversation(self, role: str, content: any, 
+                         context: Optional[str] = None, 
+                         generated_text: Optional[str] = None) -> None:
         if isinstance(content, (list, dict)):
             content = json.dumps(content)
 
@@ -88,7 +152,7 @@ class DatabaseManager:
             with conn.cursor() as cur:
                 try:
                     cur.execute(
-                        """INSERT INTO conversations 
+                        f"""INSERT INTO {self.schema_name}.conversations 
                            (user_id, role, content, context, generated_text) 
                            VALUES (%s, %s, %s, %s, %s)""",
                         (self.user_id, role, content, context, generated_text)
@@ -102,8 +166,24 @@ class DatabaseManager:
             with conn.cursor() as cur:
                 try:
                     cur.execute(
-                        """SELECT role, content, context 
-                           FROM conversations 
+                        f"""SELECT role, content, context 
+                           FROM {self.schema_name}.conversations 
+                           WHERE user_id = %s
+                           ORDER BY timestamp DESC LIMIT %s""",
+                        (self.user_id, limit)
+                    )
+                    return cur.fetchall()
+                except psycopg2.Error as e:
+                    print(f"Database error: {e}")
+                    return []
+
+    def get_recent_email_activities(self, limit=5):
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        f"""SELECT recipient, subject, context, generated_text 
+                           FROM {self.schema_name}.email_activities 
                            WHERE user_id = %s
                            ORDER BY timestamp DESC LIMIT %s""",
                         (self.user_id, limit)
@@ -118,12 +198,25 @@ class DatabaseManager:
             with conn.cursor() as cur:
                 try:
                     cur.execute(
-                        "INSERT INTO email_activities (user_id, recipient, subject, context, generated_text) VALUES (%s, %s, %s, %s, %s)",
+                        f"""INSERT INTO {self.schema_name}.email_activities 
+                           (user_id, recipient, subject, context, generated_text) 
+                           VALUES (%s, %s, %s, %s, %s)""",
                         (self.user_id, recipient, subject, context, generated_text)
                     )
                 except psycopg2.Error as e:
                     print(f"Database error: {e}")
                     raise
+    
+    def execute_query(self, query):
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query)
+                    results = cur.fetchall()
+                    return results
+        except psycopg2.Error as e:
+            print(f"Database error: {e}")
+            return []
 
     def __del__(self):
         """Cleanup connection pool"""
