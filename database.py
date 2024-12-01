@@ -116,20 +116,25 @@ class DatabaseManager:
             self.create_user_schema()
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Create tables in visitor's schema
+                    # Create tables in visitor's schema with all required columns
                     cur.execute(f"""
                         CREATE TABLE IF NOT EXISTS {self.schema_name}.conversations (
                             id SERIAL PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            role TEXT NOT NULL,
                             content TEXT NOT NULL,
                             context TEXT,
+                            generated_text TEXT,
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
 
                         CREATE TABLE IF NOT EXISTS {self.schema_name}.email_activities (
                             id SERIAL PRIMARY KEY,
+                            user_id TEXT NOT NULL,
                             recipient TEXT NOT NULL,
                             subject TEXT NOT NULL,
                             context TEXT,
+                            generated_text TEXT,
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
