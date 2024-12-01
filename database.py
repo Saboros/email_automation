@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from typing import Optional, List, Tuple
 import os
 
-
 class DatabaseManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
