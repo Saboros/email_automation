@@ -9,6 +9,7 @@ from typing import Dict, List
 from streamlit_option_menu import option_menu
 import time
 from dotenv import load_dotenv
+import uuid
 
 load_dotenv()
 
@@ -16,11 +17,14 @@ load_dotenv()
 st.set_page_config(page_title="Email-Automation with Chat", page_icon="🤖")
 st.title("Email-Automation with Chat")
 
+# User session management
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())  # Generate unique user ID
 
-# Initialize database
+# Initialize database with user_id
 @st.cache_resource
 def init_database():
-    return DatabaseManager()
+    return DatabaseManager(user_id=st.session_state.user_id)
 
 if "db" not in st.session_state:
     st.session_state.db = init_database()
@@ -128,7 +132,7 @@ if selection == "Email Automation":
                                 email_context
                             )
                             if email_body:
-                                # Save email activity to database
+                                # Save email activity to database with user_id
                                 st.session_state.db.save_email_activity(
                                     recipient_name,
                                     subject,
