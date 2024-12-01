@@ -7,6 +7,10 @@ import os
 
 class DatabaseManager:
     def __init__(self, session_id: str):
+        """Initialize database manager with session ID
+        Args:
+            session_id (str): Unique session identifier
+        """
         self.session_id = session_id
         self.user_id = session_id  # Use session_id as user_id for consistency
         self.schema_name = f"session_{session_id.replace('-', '_')}"
