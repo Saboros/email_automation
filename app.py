@@ -28,6 +28,7 @@ if 'db' not in st.session_state:
 if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
+# Initialize database with session_id only
 db = DatabaseManager(session_id=st.session_state.session_id)
 db.create_session_schema()
 db.init_session_tables()
