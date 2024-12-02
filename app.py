@@ -25,38 +25,18 @@ if 'user_id' not in st.session_state:
 if 'db' not in st.session_state:
     st.session_state.db = None
 
-if 'session_id' not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
-
-# Initialize database with session_id only
-db = DatabaseManager(session_id=st.session_state.session_id)
-db.create_session_schema()
-db.init_session_tables()
-
-# Session Management
-@contextmanager
-def database_connection():
-    """Context manager for database connections"""
-    try:
-        # Initialize database if not exists
-        if st.session_state.db is None:
-            st.session_state.db = DatabaseManager(user_id=st.session_state.user_id)
-            st.session_state.db.init_database()  # Initialize tables
-        yield st.session_state.db
-    except Exception as e:
-        st.error(f"Database connection error: {e}")
-        st.session_state.db = None  # Reset on error
-        raise
-    finally:
-        if hasattr(st.session_state, 'db') and st.session_state.db is not None:
-            st.session_state.db.pool.closeall()  # Cleanup connections
+# Initialize database with user_id
+db = DatabaseManager(user_id=st.session_state.user_id)
+db.create_user_schema()
+db.init_database()
 
 # Database initialization
 @st.cache_resource
 def init_database():
     try:
-        with database_connection() as db:
-            return db
+        db = DatabaseManager(user_id=st.session_state.user_id)
+        db.init_database()
+        return db
     except Exception as e:
         st.error(f"Failed to initialize database: {e}")
         return None
@@ -67,7 +47,6 @@ if st.session_state.db is None:
     if st.session_state.db is None:
         st.error("Failed to initialize database. Please refresh the page.")
         st.stop()
-
 
 if "email_activities" not in st.session_state:
     st.session_state.email_activities = []
@@ -88,8 +67,7 @@ def load_ai_model():
 if "ai_model" not in st.session_state:
     st.session_state.ai_model = load_ai_model()
 
-
-#System prompt
+# System prompt
 if "messages" not in st.session_state:
     system_message = {
         "role": "system",
@@ -103,7 +81,7 @@ if "messages" not in st.session_state:
     }
     st.session_state.messages = [system_message]
 
-#Selection tab
+# Selection tab
 selection = option_menu(
                         menu_title=None,
                         options=["Email Automation", "Chat Interface"],
@@ -111,7 +89,7 @@ selection = option_menu(
                         default_index=0,
                         icons = ["envelope", "chat"])
 
-#----- EMAIL AUTOMATION -----
+# ----- EMAIL AUTOMATION -----
 if selection == "Email Automation":
     
     st.title("Email Automation")
@@ -156,7 +134,7 @@ if selection == "Email Automation":
                         
                         email_summary = []
                         
-                        #Sending email progress bar 
+                        # Sending email progress bar 
                         for index, row in df.iterrows():
                             status_text.text(f"Sending email {index + 1} of {total_emails}...")
                             progress_bar.progress((index + 1) / total_emails)
@@ -172,13 +150,12 @@ if selection == "Email Automation":
                             )
                             if email_body:
                                 # Save email activity to database with user_id
-                                with database_connection() as db:
-                                    db.save_email_activity(
-                                        recipient_name,
-                                        subject,
-                                        email_context,
-                                        email_body
-                                    )
+                                db.save_email_activity(
+                                    recipient_name,
+                                    subject,
+                                    email_context,
+                                    email_body
+                                )
                                 
                                 email_automation.send_email(recipient_email, subject, email_body)
                                 email_summary.append({
@@ -199,12 +176,7 @@ if selection == "Email Automation":
             else:
                 st.warning("Please fill in all email configuration fields")
 
-
-
-
-
-#----- CHAT INTERFACE -----
-
+# ----- CHAT INTERFACE -----
 if selection == "Chat Interface":
     st.title("Chat Interface")
     
@@ -214,14 +186,12 @@ if selection == "Chat Interface":
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-    
     # Modify the chat input handling
     if prompt := st.chat_input("What would you like to ask?"):
-        with database_connection() as db:
-            recent_emails = db.get_recent_email_activities(5)
+        recent_emails = db.get_recent_email_activities(5)
         system_context = st.session_state.messages[0]["content"]
             
-            # Always include database status
+        # Always include database status
         email_context = "\n[EMAIL CONTEXT]\n"
         if recent_emails:
             for email in recent_emails:
@@ -242,20 +212,17 @@ if selection == "Chat Interface":
             "content": prompt
         })
             
-        
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
-                # Pass full context to AI
+            # Pass full context to AI
             full_response = st.session_state.ai_model.generate_response(st.session_state.messages)
                 
-                # Save assistant's response
-            with database_connection() as db:
-                db.save_conversation("assistant", full_response)
+            # Save assistant's response
+            db.save_conversation("assistant", full_response)
                 
-            
             placeholder_text = ""
             for chunk in full_response.split():
                 placeholder_text += chunk + " "
