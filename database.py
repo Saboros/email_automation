@@ -6,15 +6,10 @@ from typing import Optional, List, Tuple
 import os
 
 class DatabaseManager:
-    def __init__(self, session_id: str):
-        """Initialize database manager with session ID
-        Args:
-            session_id (str): Unique session identifier
-        """
-        self.session_id = session_id
-        self.user_id = session_id  # Use session_id as user_id for consistency
-        self.schema_name = f"session_{session_id.replace('-', '_')}"
+    def __init__(self, user_id: str):
+        self.user_id = user_id
         self._initialize_pool()
+        self.schema_name = f"user_{self.user_id.replace('-', '_')}"
 
     def _initialize_pool(self):
         """Initialize the connection pool"""
@@ -97,34 +92,33 @@ class DatabaseManager:
                 """)
     
     def create_user_schema(self):
+        """Create a schema for the user if it doesn't exist"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 try:
-                    # Drop existing schema if exists for clean slate
+                    # Create schema if not exists
                     cur.execute(f"""
-                        DROP SCHEMA IF EXISTS {self.schema_name} CASCADE;
-                        CREATE SCHEMA {self.schema_name};
-                        -- Restrict access to only the current database user
-                        REVOKE ALL ON SCHEMA {self.schema_name} FROM PUBLIC;
-                        GRANT USAGE ON SCHEMA {self.schema_name} TO database_q6g3_user;
-                        -- Set restrictive default privileges
-                        ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name}
-                        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES 
-                        TO database_q6g3_user;
+                        CREATE SCHEMA IF NOT EXISTS {self.schema_name};
+                        GRANT USAGE ON SCHEMA {self.schema_name} TO PUBLIC;
+                        ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name} 
+                        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
                     """)
-                    conn.commit()
                 except psycopg2.Error as e:
                     print(f"Schema creation error: {e}")
                     raise
 
     def init_database(self):
+        """Initialize database with user schema and tables"""
         try:
             self.create_user_schema()
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Create tables in visitor's schema with all required columns
+                    # Create tables in user schema
                     cur.execute(f"""
-                        CREATE TABLE IF NOT EXISTS {self.schema_name}.conversations (
+                        DROP TABLE IF EXISTS {self.schema_name}.conversations CASCADE;
+                        DROP TABLE IF EXISTS {self.schema_name}.email_activities CASCADE;
+                        
+                        CREATE TABLE {self.schema_name}.conversations (
                             id SERIAL PRIMARY KEY,
                             user_id TEXT NOT NULL,
                             role TEXT NOT NULL,
@@ -134,7 +128,7 @@ class DatabaseManager:
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
 
-                        CREATE TABLE IF NOT EXISTS {self.schema_name}.email_activities (
+                        CREATE TABLE {self.schema_name}.email_activities (
                             id SERIAL PRIMARY KEY,
                             user_id TEXT NOT NULL,
                             recipient TEXT NOT NULL,
@@ -144,7 +138,6 @@ class DatabaseManager:
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
-                    conn.commit()
         except Exception as e:
             print(f"Error initializing database: {e}")
             raise
