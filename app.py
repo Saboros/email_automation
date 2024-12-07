@@ -13,10 +13,8 @@ from contextlib import contextmanager
 
 load_dotenv()
 
-
 # Page config
 st.set_page_config(page_title="Email-Automation with Chat", page_icon="🤖")
-
 
 st.markdown("""
 <style>
@@ -114,13 +112,13 @@ def switch_menu(menu):
     st.session_state.active_menu = menu
 
 with st.sidebar:
-    #st.image("467400633_2369544196731392_5572063511124428547_n.jpg", width=50)  
+    st.image("467400633_2369544196731392_5572063511124428547_n.jpg", width=50)  
     st.markdown("### Email Assistant")
     st.markdown("---")
     
     selected = option_menu(
         menu_title=None,
-        options=["Email Automation", "Chat Interface", "Send Follow-Up Emails"],
+        options=["Email Automation", "Chat Interface"],
         icons=["envelope-fill", "chat-dots-fill", "arrow-repeat"], 
         default_index=0,
         styles={
@@ -305,6 +303,7 @@ elif st.session_state.active_menu == "Chat Interface":
                 Subject: {email[1]}
                 Email Content: {email[2]}
                 Generated Text: {email[3]}
+                
                 -------------------"""
         else:
             email_context += "DATABASE STATUS: No email records found\n"
@@ -337,31 +336,5 @@ elif st.session_state.active_menu == "Chat Interface":
             message_placeholder.markdown(full_response)
 
         st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-def send_follow_up_emails():
-    st.title("Send Follow-Up Emails")
-
-    # Fetch replies from the database
-    replies = db.get_email_replies()
-
-    if not replies:
-        st.info("No replies found.")
-        return
-
-    email_automation = EmailAutomation(
-        api_key=f"{os.getenv('API_KEY')}",
-        **st.session_state.email_config
-    )
-    
-    for reply in replies:
-        email_activity = db.get_email_activity(reply['email_activity_id'])
-        follow_up_email = email_automation.generate_follow_up_email(email_activity['email_body'], reply['reply_content'])
-
-        # Send follow-up email
-        email_automation.send_email(email_activity['recipient'], "Follow-Up: " + email_activity['subject'], follow_up_email)
-        st.success(f"Follow-up email sent to {email_activity['recipient']}")
-
-if st.session_state.active_menu == "Send Follow-Up Emails":
-    send_follow_up_emails()
 
 st.sidebar.caption(f"Current Menu: :red[{st.session_state.active_menu}]")
