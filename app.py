@@ -114,7 +114,7 @@ def switch_menu(menu):
     st.session_state.active_menu = menu
 
 with st.sidebar:
-    st.image("467400633_2369544196731392_5572063511124428547_n.jpg", width=50)  
+    #st.image("467400633_2369544196731392_5572063511124428547_n.jpg", width=50)  
     st.markdown("### Email Assistant")
     st.markdown("---")
     
