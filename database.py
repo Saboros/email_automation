@@ -4,6 +4,7 @@ import json
 from contextlib import contextmanager
 from typing import Optional, List, Tuple
 import os
+import time
 
 class DatabaseManager:
     def __init__(self, user_id: str):
@@ -92,20 +93,43 @@ class DatabaseManager:
                 """)
     
     def create_user_schema(self):
-        """Create a schema for the user if it doesn't exist"""
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                try:
-                    # Create schema if not exists
-                    cur.execute(f"""
-                        CREATE SCHEMA IF NOT EXISTS {self.schema_name};
-                        GRANT USAGE ON SCHEMA {self.schema_name} TO PUBLIC;
-                        ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name} 
-                        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
-                    """)
-                except psycopg2.Error as e:
-                    print(f"Schema creation error: {e}")
-                    raise
+        """Create a schema for the user if it doesn't exist with proper error handling"""
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        for attempt in range(max_retries):
+            with self.get_connection() as conn:
+                # Start a transaction
+                conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
+                
+                with conn.cursor() as cur:
+                    try:
+                        # Try to acquire an advisory lock
+                        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (self.schema_name,))
+                        
+                        # Check if schema exists
+                        cur.execute("""
+                            SELECT schema_name 
+                            FROM information_schema.schemata 
+                            WHERE schema_name = %s
+                        """, (self.schema_name,))
+                        
+                        if not cur.fetchone():
+                            # Create schema if not exists
+                            cur.execute(f"""
+                                CREATE SCHEMA IF NOT EXISTS {self.schema_name};
+                                GRANT USAGE ON SCHEMA {self.schema_name} TO PUBLIC;
+                                ALTER DEFAULT PRIVILEGES IN SCHEMA {self.schema_name} 
+                                GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
+                            """)
+                        return True
+                        
+                    except psycopg2.Error as e:
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        print(f"Schema creation error: {e}")
+                        raise
 
     def init_database(self):
         """Initialize database with user schema and tables"""
@@ -117,6 +141,7 @@ class DatabaseManager:
                     cur.execute(f"""
                         DROP TABLE IF EXISTS {self.schema_name}.conversations CASCADE;
                         DROP TABLE IF EXISTS {self.schema_name}.email_activities CASCADE;
+                        DROP TABLE IF EXISTS {self.schema_name}.email_replies CASCADE;
                         
                         CREATE TABLE {self.schema_name}.conversations (
                             id SERIAL PRIMARY KEY,
@@ -134,12 +159,21 @@ class DatabaseManager:
                             recipient TEXT NOT NULL,
                             subject TEXT NOT NULL,
                             context TEXT,
+                            email_body TEXT,
                             generated_text TEXT,
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
+
+                        CREATE TABLE {self.schema_name}.email_replies (
+                            id SERIAL PRIMARY KEY,
+                            email_activity_id INTEGER REFERENCES {self.schema_name}.email_activities(id),
+                            reply_content TEXT NOT NULL,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
                     """)
+                    conn.commit()
         except Exception as e:
-            print(f"Error initializing database: {e}")
+            print(f"Schema creation error: {e}")
             raise
 
     def save_conversation(self, role: str, content: any, 
@@ -193,19 +227,18 @@ class DatabaseManager:
                     print(f"Database error: {e}")
                     return []
 
-    def save_email_activity(self, recipient, subject, context, generated_text):
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                try:
-                    cur.execute(
-                        f"""INSERT INTO {self.schema_name}.email_activities 
-                           (user_id, recipient, subject, context, generated_text) 
-                           VALUES (%s, %s, %s, %s, %s)""",
-                        (self.user_id, recipient, subject, context, generated_text)
-                    )
-                except psycopg2.Error as e:
-                    print(f"Database error: {e}")
-                    raise
+    def save_email_activity(self, recipient, subject, context, email_body, generated_text):
+        """Save email activity to the database"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        INSERT INTO {self.schema_name}.email_activities (user_id, recipient, subject, context, email_body, generated_text)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (self.user_id, recipient, subject, context, email_body, generated_text))
+                    conn.commit()
+        except Exception as e:
+            print(f"Error saving email activity: {e}")
     
     def execute_query(self, query):
         try:
@@ -275,3 +308,52 @@ class DatabaseManager:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+
+    def get_email_replies(self):
+        """Fetch email replies from the database."""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        SELECT id, email_activity_id, reply_content, timestamp
+                        FROM {self.schema_name}.email_replies
+                        ORDER BY timestamp DESC
+                    """)
+                    replies = cur.fetchall()
+                    return [
+                        {
+                            "id": row[0],
+                            "email_activity_id": row[1],
+                            "reply_content": row[2],
+                            "timestamp": row[3]
+                        }
+                        for row in replies
+                    ]
+        except Exception as e:
+            print(f"Error fetching email replies: {e}")
+            return []
+
+    def get_email_activity(self, email_activity_id):
+        """Fetch email activity by ID from the database."""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        SELECT id, user_id, recipient, subject, context, email_body, timestamp
+                        FROM {self.schema_name}.email_activities
+                        WHERE id = %s
+                    """, (email_activity_id,))
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "id": row[0],
+                            "user_id": row[1],
+                            "recipient": row[2],
+                            "subject": row[3],
+                            "context": row[4],
+                            "email_body": row[5],
+                            "timestamp": row[6]
+                        }
+        except Exception as e:
+            print(f"Error fetching email activity: {e}")
+            return None
