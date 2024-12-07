@@ -21,10 +21,6 @@ class EmailAutomation:
         self.sender_name = sender_name
         self.api_url = "https://api.hyperbolic.xyz/v1/chat/completions" 
     
-    def generate_follow_up_email(self, orignal_email_body, reply_content):
-        follow_up_context = f"Original Email:\n{orignal_email_body}\n\nReply:\n{reply_content}"
-        follow_up_email = self.generate_email("Re: Follow-up on Previous Email", "Recipient", follow_up_context)
-        return follow_up_email
 
     def generate_email(self, subject, recipient_name, email_context):
         headers = {
