@@ -87,6 +87,7 @@ class DatabaseManager:
                         recipient TEXT NOT NULL,
                         subject TEXT NOT NULL,
                         context TEXT,
+                        email_body TEXT,
                         generated_text TEXT,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
@@ -141,7 +142,6 @@ class DatabaseManager:
                     cur.execute(f"""
                         DROP TABLE IF EXISTS {self.schema_name}.conversations CASCADE;
                         DROP TABLE IF EXISTS {self.schema_name}.email_activities CASCADE;
-                        DROP TABLE IF EXISTS {self.schema_name}.email_replies CASCADE;
                         
                         CREATE TABLE {self.schema_name}.conversations (
                             id SERIAL PRIMARY KEY,
@@ -161,13 +161,6 @@ class DatabaseManager:
                             context TEXT,
                             email_body TEXT,
                             generated_text TEXT,
-                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        );
-
-                        CREATE TABLE {self.schema_name}.email_replies (
-                            id SERIAL PRIMARY KEY,
-                            email_activity_id INTEGER REFERENCES {self.schema_name}.email_activities(id),
-                            reply_content TEXT NOT NULL,
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
@@ -212,28 +205,67 @@ class DatabaseManager:
                     return []
 
     def get_recent_email_activities(self, limit=5):
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                try:
-                    # Only query current user's schema
+        """Get recent email activities with improved error handling and logging"""
+        try:
+            # First verify schema exists
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Check if schema exists
+                    cur.execute("""
+                        SELECT schema_name 
+                        FROM information_schema.schemata 
+                        WHERE schema_name = %s
+                    """, (self.schema_name,))
+                    
+                    if not cur.fetchone():
+                        print(f"Schema {self.schema_name} does not exist")
+                        self.create_user_schema()  # Create if missing
+                    
+                    # Check if table exists
                     cur.execute(f"""
-                        SELECT recipient, subject, context, generated_text 
-                        FROM {self.schema_name}.email_activities 
-                        WHERE user_id = %s
-                        ORDER BY timestamp DESC LIMIT %s
-                    """, (self.user_id, limit))
-                    return cur.fetchall()
-                except psycopg2.Error as e:
-                    print(f"Database error: {e}")
-                    return []
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_schema = %s 
+                            AND table_name = 'email_activities'
+                        )
+                    """, (self.schema_name,))
+                    
+                    if not cur.fetchone()[0]:
+                        print(f"Table email_activities does not exist in schema {self.schema_name}")
+                        return []
+
+                    # Query with better error handling
+                    try:
+                        cur.execute(f"""
+                            SELECT recipient, subject, context, email_body, generated_text, timestamp
+                            FROM {self.schema_name}.email_activities 
+                            WHERE user_id = %s
+                            ORDER BY timestamp DESC 
+                            LIMIT %s
+                        """, (self.user_id, limit))
+                        
+                        results = cur.fetchall()
+                        if not results:
+                            print(f"No email activities found for user {self.user_id}")
+                        return results
+                        
+                    except psycopg2.Error as e:
+                        print(f"Query error: {e.pgerror}")
+                        return []
+                    
+        except Exception as e:
+            print(f"Database connection error: {str(e)}")
+            return []
 
     def save_email_activity(self, recipient, subject, context, email_body, generated_text):
         """Save email activity to the database"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # Change to use schema_name instead of public schema
                     cur.execute(f"""
-                        INSERT INTO {self.schema_name}.email_activities (user_id, recipient, subject, context, email_body, generated_text)
+                        INSERT INTO {self.schema_name}.email_activities 
+                        (user_id, recipient, subject, context, email_body, generated_text)
                         VALUES (%s, %s, %s, %s, %s, %s)
                     """, (self.user_id, recipient, subject, context, email_body, generated_text))
                     conn.commit()
@@ -308,52 +340,3 @@ class DatabaseManager:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
-
-    def get_email_replies(self):
-        """Fetch email replies from the database."""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(f"""
-                        SELECT id, email_activity_id, reply_content, timestamp
-                        FROM {self.schema_name}.email_replies
-                        ORDER BY timestamp DESC
-                    """)
-                    replies = cur.fetchall()
-                    return [
-                        {
-                            "id": row[0],
-                            "email_activity_id": row[1],
-                            "reply_content": row[2],
-                            "timestamp": row[3]
-                        }
-                        for row in replies
-                    ]
-        except Exception as e:
-            print(f"Error fetching email replies: {e}")
-            return []
-
-    def get_email_activity(self, email_activity_id):
-        """Fetch email activity by ID from the database."""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(f"""
-                        SELECT id, user_id, recipient, subject, context, email_body, timestamp
-                        FROM {self.schema_name}.email_activities
-                        WHERE id = %s
-                    """, (email_activity_id,))
-                    row = cur.fetchone()
-                    if row:
-                        return {
-                            "id": row[0],
-                            "user_id": row[1],
-                            "recipient": row[2],
-                            "subject": row[3],
-                            "context": row[4],
-                            "email_body": row[5],
-                            "timestamp": row[6]
-                        }
-        except Exception as e:
-            print(f"Error fetching email activity: {e}")
-            return None
