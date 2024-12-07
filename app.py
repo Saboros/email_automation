@@ -41,35 +41,31 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state variables first
-if 'user_id' not in st.session_state:
-    st.session_state.user_id = str(uuid.uuid4())
-
-if 'db' not in st.session_state:
-    st.session_state.db = None
-
-# Initialize database with user_id
-db = DatabaseManager(user_id=st.session_state.user_id)
-db.create_user_schema()
-db.init_database()
-
-# Database initialization
-@st.cache_resource
-def init_database():
+# At the top of app.py
+if 'persistent_user_id' not in st.session_state:
+    # Try to load from disk or create new
     try:
-        db = DatabaseManager(user_id=st.session_state.user_id)
-        db.init_database()
-        return db
-    except Exception as e:
-        st.error(f"Failed to initialize database: {e}")
-        return None
+        with open('.user_id', 'r') as f:
+            st.session_state.persistent_user_id = f.read().strip()
+    except FileNotFoundError:
+        st.session_state.persistent_user_id = str(uuid.uuid4())
+        with open('.user_id', 'w') as f:
+            f.write(st.session_state.persistent_user_id)
 
-# Initialize database on app start
-if st.session_state.db is None:
-    st.session_state.db = init_database()
-    if st.session_state.db is None:
-        st.error("Failed to initialize database. Please refresh the page.")
-        st.stop()
+# Use persistent ID everywhere
+st.session_state.user_id = st.session_state.persistent_user_id
+
+# Store the user_id in a persistent way
+@st.cache_resource
+def get_database_manager(user_id):
+    db = DatabaseManager(user_id=user_id)
+    db.create_user_schema()
+    db.init_database()
+    return db
+
+# Initialize database with consistent user_id
+if 'db' not in st.session_state:
+    st.session_state.db = get_database_manager(st.session_state.user_id)
 
 if "email_activities" not in st.session_state:
     st.session_state.email_activities = []
@@ -218,6 +214,10 @@ def email_automation_page():
                         st.warning("Please fill in all required fields")
 
                 if send_emails:
+                    # Use the same database instance
+                    db = st.session_state.db
+                    print(f"[DEBUG] Using user ID: {db.user_id}")
+                    
                     try:
                         with st.spinner('Initializing email automation...'):
                             email_automation = EmailAutomation(
@@ -254,8 +254,7 @@ def email_automation_page():
                                         recipient_name,
                                         subject,
                                         email_context,
-                                        email_body,
-                                        email_body  # Assuming generated_text is the same as email_body
+                                        email_body
                                     )
                                     
                                     email_automation.send_email(recipient_email, subject, email_body)
@@ -284,6 +283,8 @@ if st.session_state.active_menu == "Email Automation":
 elif st.session_state.active_menu == "Chat Interface":
     st.title("Chat Interface")
     
+    db = st.session_state.db
+
     for message in st.session_state.messages:
         if message["role"] != "system":
             with st.chat_message(message["role"]):
@@ -302,7 +303,6 @@ elif st.session_state.active_menu == "Chat Interface":
                 Recipient: {email[0]}
                 Subject: {email[1]}
                 Email Content: {email[2]}
-                Generated Text: {email[3]}
                 
                 -------------------"""
         else:
