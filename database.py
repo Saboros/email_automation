@@ -88,7 +88,6 @@ class DatabaseManager:
                         subject TEXT NOT NULL,
                         context TEXT,
                         email_body TEXT,
-                        generated_text TEXT,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -257,20 +256,36 @@ class DatabaseManager:
             print(f"Database connection error: {str(e)}")
             return []
 
-    def save_email_activity(self, recipient, subject, context, email_body, generated_text):
-        """Save email activity to the database"""
+    def save_email_activity(self, recipient, subject, context, email_body):
+        """Save email activity to the database with better error handling"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Change to use schema_name instead of public schema
+                    # First ensure schema exists
+                    cur.execute("""
+                        SELECT schema_name 
+                        FROM information_schema.schemata 
+                        WHERE schema_name = %s
+                    """, (self.schema_name,))
+                    
+                    if not cur.fetchone():
+                        self.create_user_schema()
+                    
+                    # Insert the email activity
                     cur.execute(f"""
                         INSERT INTO {self.schema_name}.email_activities 
-                        (user_id, recipient, subject, context, email_body, generated_text)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (self.user_id, recipient, subject, context, email_body, generated_text))
+                        (user_id, recipient, subject, context, email_body)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (self.user_id, recipient, subject, context, email_body))
+                    
+                    inserted_id = cur.fetchone()[0]
                     conn.commit()
+                    print(f"Successfully saved email activity with ID: {inserted_id}")
+                    return inserted_id
         except Exception as e:
-            print(f"Error saving email activity: {e}")
+            print(f"Error saving email activity: {str(e)}")
+            raise
     
     def execute_query(self, query):
         try:
