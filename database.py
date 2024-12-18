@@ -6,6 +6,10 @@ from typing import Optional, List, Tuple
 import os
 import time
 
+
+
+#Json schema separates the users session database when logged in.
+#login function soon.
 class DatabaseManager:
     def __init__(self, user_id: str):
         self.user_id = user_id
@@ -24,7 +28,7 @@ class DatabaseManager:
     @contextmanager
     def get_connection(self):
         """Context manager for database connections"""
-        self._initialize_pool()  # Ensure pool is available
+        self._initialize_pool() 
         conn = None
         try:
             conn = self.pool.getconn()
@@ -37,6 +41,38 @@ class DatabaseManager:
             if conn:
                 conn.commit()
                 self.pool.putconn(conn)
+
+    def get_email_metrics(self):
+        """Get email sending metrics"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Get total emails
+                cur.execute(f"""
+                    SELECT 
+                        COUNT(*) as total_emails,
+                        COUNT(DISTINCT recipient) as unique_recipients,
+                        COUNT(DISTINCT DATE(timestamp)) as active_days,
+                        MAX(timestamp) as last_sent
+                    FROM {self.schema_name}.email_activities
+                    WHERE user_id = %s
+                """, (self.user_id,))
+                return cur.fetchone()
+        
+    def get_daily_email_counts(self):
+        """Get daily email sending counts"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                        SELECT
+                            DATE(timestamp) as date,
+                            COUNT(*) as count
+                        FROM {self.schema_name}.email_activities
+                        WHERE user_id = %s
+                        GROUP BY DATE(timestamp)
+                        ORDER BY date DESC
+                        LIMIT 30
+                """, (self.user_id,))
+                return cur.fetchall()
 
     def close_pool(self):
         """Explicitly close the connection pool"""
@@ -137,7 +173,6 @@ class DatabaseManager:
             self.create_user_schema()
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Create tables in user schema
                     cur.execute(f"""
                         DROP TABLE IF EXISTS {self.schema_name}.conversations CASCADE;
                         DROP TABLE IF EXISTS {self.schema_name}.email_activities CASCADE;
@@ -160,6 +195,14 @@ class DatabaseManager:
                             context TEXT,
                             email_body TEXT,
                             generated_text TEXT,
+                            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+
+                        CREATE TABLE IF NOT EXISTS {self.schema_name}.token_usage (
+                            id SERIAL PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            tokens_used INTEGER NOT NULL,
+                            operation_type TEXT NOT NULL,
                             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
@@ -206,10 +249,8 @@ class DatabaseManager:
     def get_recent_email_activities(self, limit=5):
         """Get recent email activities with improved error handling and logging"""
         try:
-            # First verify schema exists
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    # Check if schema exists
                     cur.execute("""
                         SELECT schema_name 
                         FROM information_schema.schemata 
@@ -218,7 +259,7 @@ class DatabaseManager:
                     
                     if not cur.fetchone():
                         print(f"Schema {self.schema_name} does not exist")
-                        self.create_user_schema()  # Create if missing
+                        self.create_user_schema() 
                     
                     # Check if table exists
                     cur.execute(f"""
@@ -355,3 +396,59 @@ class DatabaseManager:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+
+    def create_token_tracking_table(self):
+        """Create token tracking table"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.schema_name}.token_usage (
+                        id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        tokens_used INTEGER NOT NULL,
+                        operation_type TEXT NOT NULL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+    def save_token_usage(self, tokens_used: int, operation_type: str):
+        """Save token usage data"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    INSERT INTO {self.schema_name}.token_usage 
+                    (user_id, tokens_used, operation_type)
+                    VALUES (%s, %s, %s)
+                """, (self.user_id, tokens_used, operation_type))
+
+    def get_token_metrics(self):
+        """Get token usage metrics"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT 
+                        SUM(tokens_used) as total_tokens,
+                        AVG(tokens_used) as avg_tokens,
+                        COUNT(*) as total_operations,
+                        MAX(timestamp) as last_operation
+                    FROM {self.schema_name}.token_usage
+                    WHERE user_id = %s
+                """, (self.user_id,))
+                return cur.fetchone()
+
+    def get_daily_token_usage(self, days: int = 30):
+        """Get daily token usage"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT 
+                        DATE(timestamp) as date,
+                        SUM(tokens_used) as tokens,
+                        COUNT(*) as operations
+                    FROM {self.schema_name}.token_usage
+                    WHERE user_id = %s
+                    AND timestamp >= NOW() - INTERVAL '%s days'
+                    GROUP BY DATE(timestamp)
+                    ORDER BY date DESC
+                """, (self.user_id, days))
+                return cur.fetchall()
