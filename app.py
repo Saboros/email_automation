@@ -10,12 +10,24 @@ import time
 from dotenv import load_dotenv
 import uuid
 from contextlib import contextmanager
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+from datetime import datetime, timedelta
+
+
+
 
 load_dotenv()
+
+
+
+
 
 # Page config
 st.set_page_config(page_title="Email-Automation with Chat", page_icon="🤖")
 
+#Load CSS design for UI
 st.markdown("""
 <style>
     .sidebar-content {
@@ -41,7 +53,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# At the top of app.py
 if 'persistent_user_id' not in st.session_state:
     # Try to load from disk or create new
     try:
@@ -77,6 +88,8 @@ if "llm_context" not in st.session_state:
         "last_email_generation": None
     }
 
+
+
 # Initialize AI model
 @st.cache_resource
 def load_ai_model():
@@ -95,6 +108,7 @@ if "messages" not in st.session_state:
                      IMPORTANT: When asked about emails, ALWAYS check the database first via the [EMAIL CONTEXT] section.
                      If [EMAIL CONTEXT] is present, use ONLY that information to answer questions.
                      If [EMAIL CONTEXT] is empty, respond with "No email records found in database."
+                     Instead of saying [EMAIL CONTEXT], provide the actual email data.
                      Format your responses based on actual database records, not generic suggestions.
                      Be direct and specific about what email data you find."""
     }
@@ -107,15 +121,16 @@ if 'active_menu' not in st.session_state:
 def switch_menu(menu):
     st.session_state.active_menu = menu
 
+#Sidebar with CSS design for UI
 with st.sidebar:
-    # st.image("467400633_2369544196731392_5572063511124428547_n.jpg", width=50)  
+    st.image("467400633_2369544196731392_5572063511124428547_n.jpg", width=50)  
     st.markdown("### Email Assistant")
     st.markdown("---")
     
     selected = option_menu(
         menu_title=None,
-        options=["Email Automation", "Chat Interface"],
-        icons=["envelope-fill", "chat-dots-fill", "arrow-repeat"], 
+        options=["Email Automation", "Chat Interface", "Data Metrics"],
+        icons=["envelope-fill", "chat-dots-fill", "arrow-repeat", "graph-up"], 
         default_index=0,
         styles={
             "container": {"padding": "0!important", "background-color": "transparent"},
@@ -177,6 +192,26 @@ def email_automation_page():
             st.warning("Please fill in all required fields")
 
     if "email_config" in st.session_state:
+        st.markdown('_please use the format sample below:_')
+        
+        def convert_df(df):
+            return df.to_csv().encode('utf-8')
+        
+        sample_data = {
+            "recipient_name": ["John Doe"],
+            "email": ["john.doe@example.com"],
+            "subject": ["Sample Subject"]
+        }
+        df = pd.DataFrame(sample_data)
+        csv = convert_df(df)
+  
+        st.download_button(
+            label="Download Sample CSV",
+            data=csv,
+            file_name="sample.csv",
+            mime="text/csv"
+        )
+
         uploaded_file = st.file_uploader("Upload CSV file", type=['csv'])
         
         if uploaded_file is not None:
@@ -188,6 +223,9 @@ def email_automation_page():
                 email_context = st.text_area("Email Context")
                 preview_email = st.form_submit_button("Preview Email")
                 send_emails = st.form_submit_button("Send Emails")
+
+
+                #preview email
                 
                 if preview_email:
                     if sender_email and sender_password and email_context and sender_name:
@@ -279,6 +317,7 @@ def email_automation_page():
 if st.session_state.active_menu == "Email Automation":
     email_automation_page()
 
+
 # ----- CHAT INTERFACE -----
 elif st.session_state.active_menu == "Chat Interface":
     st.title("Chat Interface")
@@ -336,5 +375,104 @@ elif st.session_state.active_menu == "Chat Interface":
             message_placeholder.markdown(full_response)
 
         st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+        # Save token usage
+        db.save_token_usage(tokens_used=150, operation_type="chat_completion")
+
+
+# ----- METRICS DASHBOARD -----
+def metrics_dashboard_page():
+    st.title("Metrics Dashboard")
+    db = st.session_state.db
+
+    tab1, tab2 = st.tabs(["Email Activity", "Token Usage"])
+
+    with tab1:
+        st.subheader("Email Activity")
+        try:
+            # Get email metrics
+            total_emails, unique_recipients, active_days, last_sent = db.get_email_metrics() or (0, 0, 0, None)
+            
+            # Display email metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Emails", f"{total_emails:,}" if total_emails else "0")
+            with col2:
+                st.metric("Unique Recipients", f"{unique_recipients:,}" if unique_recipients else "0")
+            with col3:
+                st.metric("Active Days", f"{active_days}" if active_days else "0")
+            with col4:
+                st.metric("Last Sent", last_sent.strftime("%Y-%m-%d") if last_sent else "Never")
+
+            # Get and display daily email counts
+            daily_counts = db.get_daily_email_counts()
+            if daily_counts and len(daily_counts) > 0:
+                df_emails = pd.DataFrame(daily_counts, columns=['Date', 'Count'])
+                
+                fig = px.line(
+                    df_emails,
+                    x='Date',
+                    y='Count',
+                    title='Daily Email Activity'
+                )
+                fig.update_layout(
+                    xaxis_title="Date",
+                    yaxis_title="Emails Sent",
+                    showlegend=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No email activity data available yet")
+        
+        except Exception as e:
+            st.error(f"Error loading email metrics: {str(e)}")
+            print(f"Email metrics error: {str(e)}")
+
+    with tab2:
+        st.subheader("Token Usage")
+        try:
+            # Get token metrics with proper column handling
+            token_data = db.get_daily_token_usage(days=30)
+            
+            if token_data and len(token_data) > 0:
+                # Convert to DataFrame with correct columns
+                df_tokens = pd.DataFrame(token_data, columns=['Date', 'Tokens', 'Operations'])
+                
+                # Create token usage chart
+                fig = px.bar(
+                    df_tokens,
+                    x='Date',
+                    y='Tokens',
+                    title='Daily Token Usage'
+                )
+                fig.update_layout(
+                    xaxis_title="Date",
+                    yaxis_title="Tokens Used",
+                    showlegend=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Show total metrics
+                total_metrics = df_tokens.agg({
+                    'Tokens': 'sum',
+                    'Operations': 'sum'
+                })
+                
+                mcol1, mcol2 = st.columns(2)
+                with mcol1:
+                    st.metric("Total Tokens", f"{int(total_metrics['Tokens']):,}")
+                with mcol2:
+                    st.metric("Total Operations", f"{int(total_metrics['Operations']):,}")
+                
+            else:
+                st.info("No token usage data available yet")
+                
+        except Exception as e:
+            st.error(f"Error loading token metrics: {str(e)}")
+            print(f"Token metrics error: {str(e)}")
+
+if st.session_state.active_menu == "Data Metrics":
+    metrics_dashboard_page()
+        
 
 st.sidebar.caption(f"Current Menu: :red[{st.session_state.active_menu}]")
